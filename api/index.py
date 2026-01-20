@@ -1,13 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import pandas as pd
 import os
+import sys
 
 app = FastAPI()
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,27 +20,37 @@ class TelemetryRequest(BaseModel):
     regions: List[str]
     threshold_ms: float
 
-class RegionMetrics(BaseModel):
-    region: str
-    avg_latency: float
-    p95_latency: float
-    avg_uptime: float
-    breaches: int
+# Try multiple paths to find the CSV
+def load_csv():
+    possible_paths = [
+        'telemetry.csv',
+        '../telemetry.csv',
+        './telemetry.csv',
+        os.path.join(os.path.dirname(__file__), '..', 'telemetry.csv'),
+        os.path.join(os.path.dirname(__file__), 'telemetry.csv'),
+        '/var/task/telemetry.csv',
+    ]
+    
+    for path in possible_paths:
+        try:
+            if os.path.exists(path):
+                return pd.read_csv(path)
+        except Exception as e:
+            continue
+    
+    raise FileNotFoundError(f"Could not find telemetry.csv. Searched: {possible_paths}")
 
-class TelemetryResponse(BaseModel):
-    metrics: List[RegionMetrics]
+try:
+    df = load_csv()
+except Exception as e:
+    print(f"Error loading CSV: {e}", file=sys.stderr)
+    df = None
 
-# Load telemetry data - adjust path for Vercel
-csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'telemetry.csv')
-if not os.path.exists(csv_path):
-    csv_path = 'telemetry.csv'  # Fallback
-df = pd.read_csv(csv_path)
-
-@app.post("/api/telemetry", response_model=TelemetryResponse)
+@app.post("/")
 async def analyze_telemetry(request: TelemetryRequest):
-    """
-    Analyze telemetry data for specified regions.
-    """
+    if df is None:
+        raise HTTPException(status_code=500, detail="CSV file not loaded")
+    
     metrics = []
     
     for region in request.regions:
@@ -49,9 +59,9 @@ async def analyze_telemetry(request: TelemetryRequest):
         if len(region_data) == 0:
             continue
         
-        avg_latency = round(region_data['latency_ms'].mean(), 2)
-        p95_latency = round(region_data['latency_ms'].quantile(0.95), 2)
-        avg_uptime = round(region_data['uptime_pct'].mean(), 2)
+        avg_latency = round(float(region_data['latency_ms'].mean()), 2)
+        p95_latency = round(float(region_data['latency_ms'].quantile(0.95)), 2)
+        avg_uptime = round(float(region_data['uptime_pct'].mean()), 2)
         breaches = int((region_data['latency_ms'] > request.threshold_ms).sum())
         
         metrics.append({
@@ -64,9 +74,11 @@ async def analyze_telemetry(request: TelemetryRequest):
     
     return {"metrics": metrics}
 
-@app.get("/api")
-async def root():
-    return {"status": "ok", "message": "eShopCo Telemetry API"}
-
-# This is crucial for Vercel
-handler = app
+@app.get("/")
+async def health():
+    csv_loaded = df is not None
+    return {
+        "status": "ok" if csv_loaded else "error",
+        "csv_loaded": csv_loaded,
+        "csv_rows": len(df) if csv_loaded else 0
+    }

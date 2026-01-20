@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List
 import pandas as pd
@@ -7,12 +8,12 @@ import os
 
 app = FastAPI()
 
-# Enable CORS for POST requests from any origin
+# Enable CORS - CRITICAL: Must allow OPTIONS for preflight
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["POST"],
+    allow_methods=["*"],  # Must include OPTIONS
     allow_headers=["*"],
 )
 
@@ -35,22 +36,18 @@ csv_path = os.path.join(os.path.dirname(__file__), '..', 'telemetry.csv')
 df = pd.read_csv(csv_path)
 
 @app.post("/api/telemetry", response_model=TelemetryResponse)
-def analyze_telemetry(request: TelemetryRequest):
+async def analyze_telemetry(request: TelemetryRequest):
     """
     Analyze telemetry data for specified regions.
-    
-    Returns per-region metrics: avg_latency, p95_latency, avg_uptime, and breaches.
     """
     metrics = []
     
     for region in request.regions:
-        # Filter data for this region
         region_data = df[df['region'] == region]
         
         if len(region_data) == 0:
             continue
         
-        # Calculate metrics
         avg_latency = round(region_data['latency_ms'].mean(), 2)
         p95_latency = round(region_data['latency_ms'].quantile(0.95), 2)
         avg_uptime = round(region_data['uptime_pct'].mean(), 2)
@@ -66,6 +63,18 @@ def analyze_telemetry(request: TelemetryRequest):
     
     return TelemetryResponse(metrics=metrics)
 
+# Explicit OPTIONS handler for preflight
+@app.options("/api/telemetry")
+async def options_telemetry():
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
 @app.get("/")
-def read_root():
+async def read_root():
     return {"status": "ok", "message": "eShopCo Telemetry API"}

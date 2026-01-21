@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import pandas as pd
 from typing import List
 import os
+import json
 
 app = FastAPI()
 
@@ -29,25 +30,25 @@ class RegionMetrics(BaseModel):
 class TelemetryResponse(BaseModel):
     metrics: List[RegionMetrics]
 
-# Load telemetry data with proper path handling
+# Load telemetry data from JSON
 def load_telemetry_data():
-    # Try multiple path options for Vercel deployment
     possible_paths = [
-        'api/telemetry.csv',
-        'telemetry.csv',
-        os.path.join(os.getcwd(), 'api/telemetry.csv'),
-        os.path.join(os.path.dirname(__file__), 'telemetry.csv')
+        'api/telemetry.json',
+        'telemetry.json',
+        os.path.join(os.getcwd(), 'api/telemetry.json'),
+        os.path.join(os.path.dirname(__file__), 'telemetry.json')
     ]
     
     for path in possible_paths:
         try:
             if os.path.exists(path):
-                df = pd.read_csv(path)
-                return df
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                return pd.DataFrame(data)
         except Exception as e:
             continue
     
-    raise FileNotFoundError("telemetry.csv not found in any expected location")
+    raise FileNotFoundError("telemetry.json not found in any expected location")
 
 @app.get("/debug")
 def debug_info():
@@ -66,8 +67,7 @@ def debug_info():
             "file_found": False,
             "error": str(e),
             "cwd": os.getcwd(),
-            "files_in_cwd": os.listdir(os.getcwd()),
-            "files_in_api": os.listdir('api') if os.path.exists('api') else []
+            "files_in_cwd": os.listdir(os.getcwd()) if os.path.exists(os.getcwd()) else []
         }
 
 @app.post("/", response_model=TelemetryResponse)
@@ -90,7 +90,8 @@ def analyze_telemetry(request: TelemetryRequest):
         # Calculate metrics
         avg_latency = region_data['latency_ms'].mean()
         p95_latency = region_data['latency_ms'].quantile(0.95)
-        avg_uptime = region_data['uptime'].mean()
+        # Convert percentage to decimal (99.089% -> 0.99089)
+        avg_uptime = region_data['uptime_pct'].mean() / 100
         breaches = len(region_data[region_data['latency_ms'] > request.threshold_ms])
         
         metrics.append(RegionMetrics(

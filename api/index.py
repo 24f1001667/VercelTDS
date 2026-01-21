@@ -80,7 +80,7 @@ def analyze_telemetry(request: TelemetryRequest):
         
         avg_latency = region_data['latency_ms'].mean()
         p95_latency = region_data['latency_ms'].quantile(0.95)
-        avg_uptime = region_data['uptime_pct'].mean() / 100
+        avg_uptime = region_data['uptime_pct'].mean()
         breaches = len(region_data[region_data['latency_ms'] > request.threshold_ms])
         
         metrics.append(RegionMetrics(

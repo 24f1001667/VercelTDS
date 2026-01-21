@@ -12,7 +12,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["POST"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -30,7 +30,6 @@ class RegionMetrics(BaseModel):
 class TelemetryResponse(BaseModel):
     metrics: List[RegionMetrics]
 
-# Load telemetry data from JSON
 def load_telemetry_data():
     possible_paths = [
         'api/telemetry.json',
@@ -48,28 +47,20 @@ def load_telemetry_data():
         except Exception as e:
             continue
     
-    raise FileNotFoundError("telemetry.json not found in any expected location")
+    raise FileNotFoundError("telemetry.json not found")
 
-@app.get("/debug")
-def debug_info():
-    """Debug endpoint to check available data"""
-    try:
-        df = load_telemetry_data()
-        return {
-            "file_found": True,
-            "total_records": len(df),
-            "columns": list(df.columns),
-            "unique_regions": df['region'].unique().tolist() if 'region' in df.columns else [],
-            "sample_data": df.head(3).to_dict('records')
+# Add GET endpoint for health check
+@app.get("/")
+def read_root():
+    return {
+        "service": "eShopCo Latency Monitor",
+        "status": "online",
+        "endpoints": {
+            "POST /": "Submit telemetry analysis request"
         }
-    except Exception as e:
-        return {
-            "file_found": False,
-            "error": str(e),
-            "cwd": os.getcwd(),
-            "files_in_cwd": os.listdir(os.getcwd()) if os.path.exists(os.getcwd()) else []
-        }
+    }
 
+# POST endpoint for telemetry analysis
 @app.post("/", response_model=TelemetryResponse)
 def analyze_telemetry(request: TelemetryRequest):
     try:
@@ -77,7 +68,6 @@ def analyze_telemetry(request: TelemetryRequest):
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-    # Filter for requested regions
     df_filtered = df[df['region'].isin(request.regions)]
     
     metrics = []
@@ -87,10 +77,8 @@ def analyze_telemetry(request: TelemetryRequest):
         if region_data.empty:
             continue
         
-        # Calculate metrics
         avg_latency = region_data['latency_ms'].mean()
         p95_latency = region_data['latency_ms'].quantile(0.95)
-        # Convert percentage to decimal (99.089% -> 0.99089)
         avg_uptime = region_data['uptime_pct'].mean() / 100
         breaches = len(region_data[region_data['latency_ms'] > request.threshold_ms])
         

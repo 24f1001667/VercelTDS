@@ -1,12 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
 from typing import List
+import os
 
 app = FastAPI()
 
-# Enable CORS for POST requests from any origin
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,12 +15,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request model
 class TelemetryRequest(BaseModel):
     regions: List[str]
     threshold_ms: int
 
-# Response models
 class RegionMetrics(BaseModel):
     region: str
     avg_latency: float
@@ -31,22 +29,53 @@ class RegionMetrics(BaseModel):
 class TelemetryResponse(BaseModel):
     metrics: List[RegionMetrics]
 
-# Load telemetry data (you'll need to upload this file)
-# Place telemetry.csv in the api/ folder
+# Load telemetry data with proper path handling
 def load_telemetry_data():
+    # Try multiple path options for Vercel deployment
+    possible_paths = [
+        'api/telemetry.csv',
+        'telemetry.csv',
+        os.path.join(os.getcwd(), 'api/telemetry.csv'),
+        os.path.join(os.path.dirname(__file__), 'telemetry.csv')
+    ]
+    
+    for path in possible_paths:
+        try:
+            if os.path.exists(path):
+                df = pd.read_csv(path)
+                return df
+        except Exception as e:
+            continue
+    
+    raise FileNotFoundError("telemetry.csv not found in any expected location")
+
+@app.get("/debug")
+def debug_info():
+    """Debug endpoint to check available data"""
     try:
-        df = pd.read_csv('api/telemetry.csv')
-        return df
-    except FileNotFoundError:
-        # Return empty DataFrame if file doesn't exist
-        return pd.DataFrame()
+        df = load_telemetry_data()
+        return {
+            "file_found": True,
+            "total_records": len(df),
+            "columns": list(df.columns),
+            "unique_regions": df['region'].unique().tolist() if 'region' in df.columns else [],
+            "sample_data": df.head(3).to_dict('records')
+        }
+    except Exception as e:
+        return {
+            "file_found": False,
+            "error": str(e),
+            "cwd": os.getcwd(),
+            "files_in_cwd": os.listdir(os.getcwd()),
+            "files_in_api": os.listdir('api') if os.path.exists('api') else []
+        }
 
 @app.post("/", response_model=TelemetryResponse)
 def analyze_telemetry(request: TelemetryRequest):
-    df = load_telemetry_data()
-    
-    if df.empty:
-        return {"metrics": []}
+    try:
+        df = load_telemetry_data()
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
     # Filter for requested regions
     df_filtered = df[df['region'].isin(request.regions)]

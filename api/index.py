@@ -29,7 +29,7 @@ class RegionMetrics(BaseModel):
     breaches: int
 
 class TelemetryResponse(BaseModel):
-    metrics: List[RegionMetrics]
+    regions: List[RegionMetrics]
 
 def load_telemetry_data():
     possible_paths = [
@@ -91,4 +91,4 @@ def analyze_telemetry(request: TelemetryRequest):
             breaches=breaches
         ))
     
-    return {"metrics": metrics}
+    return {"regions": metrics}
